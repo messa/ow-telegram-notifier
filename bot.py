@@ -6,7 +6,9 @@ from argparse import ArgumentParser
 from asyncio import run, sleep, wait_for
 import json
 from logging import getLogger
+import os
 from pathlib import Path
+import re
 from reprlib import repr as smart_repr
 import requests
 import sys
@@ -22,32 +24,46 @@ routes = RouteTableDef()
 def main():
     p = ArgumentParser()
     p.add_argument('--conf', metavar='FILE', help='path to configuration file')
-    p.add_argument('--port', default=5000, type=int, help='bind port')
-    p.add_argument('--host', default='127.0.0.1', help='bind host')
+    p.add_argument('--port', type=int, help='bind port')
+    p.add_argument('--host', help='bind host')
     args = p.parse_args()
     setup_logging()
-    cfg_path = Path(args.conf or '../private/ow_telegram_notifier.yaml')
-    logger.debug('Loading configuration from %s', cfg_path)
-    cfg = yaml.safe_load(cfg_path.read_text())
+    cfg_path = args.conf or os.environ.get('CONF_FILE')
+    conf = Configuration(cfg_path, args)
     try:
-        run(async_main(cfg, args.host, args.port))
+        run(async_main(conf))
     except Exception as e:
         logger.exception('Bot failed: %r', e)
 
 
-async def async_main(cfg, bind_host, bind_port):
-    app = Application()
-    app.router.add_routes(routes)
-    runner = AppRunner(app)
-    await runner.setup()
-    try:
-        site = TCPSite(runner, bind_host, bind_port)
-        await site.start()
-        async with ClientSession() as session:
-            alerts = await wait_for(retrieve_alerts(cfg, session), 60)
+class Configuration:
+
+    def __init__(self, cfg_path, args):
+        if cfg_path:
+            cfg_path = Path(cfg_path)
+            logger.debug('Loading configuration from %s', cfg_path)
+            cfg = yaml.safe_load(cfg_path.read_text())
+        else:
+            cfg = {}
+        self.bind_host = args.host or '127.0.0.1'
+        self.bind_port = args.port or 5000
+        self.graphql_endpoint = os.environ.get('GRAPHQL_ENDPOINT') or cfg.get('graphql_endpoint')
+
+
+async def async_main(conf):
+    async with ClientSession() as session:
+        app = Application()
+        app.router.add_routes(routes)
+        runner = AppRunner(app)
+        await runner.setup()
+        try:
+            site = TCPSite(runner, conf.bind_host, conf.bind_port)
+            await site.start()
+            alerts = await wait_for(retrieve_alerts(conf, session), 30)
             while True:
+                await sleep(10)
                 try:
-                    new_alerts = await wait_for(retrieve_alerts(cfg, session), 60)
+                    new_alerts = await wait_for(retrieve_alerts(conf, session), 60)
                 except Exception as e:
                     logger.info('Failed to retrieve alerts: %s', e)
                     await sleep(60)
@@ -55,10 +71,8 @@ async def async_main(cfg, bind_host, bind_port):
                 logger.debug('Retrieved %d alerts', len(new_alerts))
                 alerts = new_alerts
                 app['alerts'] = alerts
-                await sleep(10)
-    finally:
-        await runner.cleanup()
-
+        finally:
+            await runner.cleanup()
 
 
 @routes.get('/')
@@ -71,31 +85,37 @@ async def handle_list_alerts(request):
     return json_response({'alerts': request.app['alerts']})
 
 
-async def retrieve_alerts(cfg, session):
-    query = dedent('''
-        {
-          activeAlerts {
-            pageInfo {
-              hasNextPage
-            }
-            edges {
-              node {
-                id
-                alertId
-                alertType
-                streamId
-                itemPath
-                lastItemUnit
-                lastItemValueJSON
-              }
-            }
+alert_query = dedent('''
+    {
+      activeAlerts {
+        pageInfo {
+          hasNextPage
+        }
+        edges {
+          node {
+            id
+            alertId
+            alertType
+            streamId
+            itemPath
+            lastItemUnit
+            lastItemValueJSON
           }
         }
-    ''')
-    headers = {
-        'Accept': 'application/json',
+      }
     }
-    async with session.post(cfg['graphql_endpoint'], headers=headers, json={'query': query}, timeout=30) as resp:
+''')
+
+
+async def retrieve_alerts(conf, session):
+    post_kwargs = dict(
+        headers={
+            'Accept': 'application/json',
+        },
+        json={'query': alert_query},
+        timeout=30)
+    logger.debug('Retrieving alerts from %s', redacted(conf.graphql_endpoint))
+    async with session.post(conf.graphql_endpoint, **post_kwargs) as resp:
         resp.raise_for_status()
         rj = await resp.json()
         logger.debug('GQL response: %s', smart_repr(rj))
@@ -115,6 +135,12 @@ def setup_logging():
     h.setFormatter(Formatter(log_format))
     h.setLevel(DEBUG)
     getLogger('').addHandler(h)
+
+
+def redacted(s):
+    assert isinstance(s, str)
+    s = re.sub(r'(https?://[^@/]+:)[^@/]+(@)', r'\1...\2', s)
+    return s
 
 
 if __name__ == '__main__':
