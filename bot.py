@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import re
 from reprlib import repr as smart_repr
-import requests
 import sys
 from textwrap import dedent
 from time import monotonic as monotime
