@@ -4,7 +4,10 @@ from aiohttp import ClientSession
 from aiohttp.web import Application, RouteTableDef, AppRunner, TCPSite, Response, json_response, HTTPForbidden
 from argparse import ArgumentParser
 from asyncio import run, sleep, wait_for
-import json
+try:
+    import simplejson as json
+except ImportError:
+    import json
 from logging import getLogger
 import os
 from pathlib import Path
@@ -52,13 +55,16 @@ class Configuration:
         self.bind_port = int(args.port or env('BIND_PORT') or cfg.get('bind_port') or 5000)
         self.graphql_endpoint = env('GRAPHQL_ENDPOINT') or cfg.get('graphql_endpoint')
         self.public_url = env('PUBLIC_URL') or cfg.get('public_url')
-        self.development_mode_enabled = args.dev
         self.telegram_api_token = env('TELEGRAM_API_TOKEN') or cfg.get('telegram_api_token')
+        self.telegram_chat_id = env('TELEGRAM_CHAT_ID') or cfg.get('telegram_chat_id')
+        self.development_mode_enabled = args.dev
+        self.sleep_interval = float(cfg.get('sleep_interval') or 5)
 
 
 async def async_main(conf):
     async with ClientSession() as session:
         current_alerts = await wait_for(retrieve_alerts(conf, session), 30)
+        logger.debug('Initial alerts:\n%s', '\n'.join(json.dumps(a) for a in current_alerts))
         app = Application()
         app['conf'] = conf
         app['current_alerts'] = current_alerts
@@ -72,16 +78,64 @@ async def async_main(conf):
             logger.info('Listening on http://%s:%s', conf.bind_host, conf.bind_port)
             await setup_telegram_webhook(conf, session)
             while True:
-                await sleep(10)
+                await sleep(conf.sleep_interval)
                 try:
                     new_alerts = await wait_for(retrieve_alerts(conf, session), 60)
                 except Exception as e:
                     logger.info('Failed to retrieve alerts: %s', e)
                     await sleep(60)
                     continue
+                await notify_about_alerts(conf, session, current_alerts, new_alerts)
                 current_alerts[:] = new_alerts
         finally:
             await runner.cleanup()
+
+
+async def notify_about_alerts(conf, session, old_alerts, new_alerts):
+    if not conf.telegram_chat_id:
+        logger.info('telegram_chat_id not configured')
+        return
+    old_alerts_by_id = {a['alertId']: a for a in old_alerts}
+    new_alerts_by_id = {a['alertId']: a for a in new_alerts}
+    assert len(old_alerts_by_id) == len(old_alerts)
+    assert len(new_alerts_by_id) == len(new_alerts)
+    messages = []
+    for a in old_alerts:
+        if a['alertId'] not in new_alerts_by_id:
+            logger.debug('Alert closed: %s', json.dumps(a))
+            messages.append('\U0001F334 ' + alert_text(a))
+    for a in new_alerts:
+        if a['alertId'] not in old_alerts_by_id:
+            logger.debug('Alert open: %s', json.dumps(a))
+            messages.append('\U0001F525 ' + alert_text(a))
+    if messages:
+        txt = '\n'.join(messages)
+        await tg_request(conf, session, 'sendMessage', {
+            'chat_id': conf.telegram_chat_id,
+            'text': txt,
+            'parse_mode': 'MarkdownV2',
+        })
+
+
+def tg_md2_escape(s):
+    '''
+    According to https://core.telegram.org/bots/api#markdownv2-style
+    '''
+    for c in '_*[]()~`>#+-=|{}.!':
+        s = s.replace(c, '\\' + c)
+    return s
+
+
+def alert_text(alert):
+    esc = tg_md2_escape
+    try:
+        label = json.loads(alert['stream']['labelJSON'])
+        label_str = ' '.join(f"{esc(k)}{esc('=')}`{esc(v)}`" for k, v in label.items())
+        path = '>'.join(alert['itemPath'])
+        return f"{label_str} *{esc(alert['alertType'])}* {esc(path)} {esc(alert['lastItemValueJSON'] or '-')} {esc('(')}`{esc(alert['alertId'])}`{esc(')')}"
+    except Exception as e:
+        logger.exception('Failed to build alert text: %r; alert: %r', e, alert)
+        return json.dumps(alert)
 
 
 @routes.get('/')
@@ -103,10 +157,11 @@ async def handle_telegram_webhook(request):
     data = await request.json()
     logger.debug('data: %r', data)
     if data.get('message') and data['message'].get('text') == '/id':
-        chat_id = data['message']['chat']['id']
+        chat = data['message']['chat']
+        chat_id = chat['id']
         await tg_request(conf, session, 'sendMessage', {
             'chat_id': chat_id,
-            'text': f'Hola, the chat id is {chat_id}',
+            'text': f'Hola, the chat id is {chat_id}\nFull data: {json.dumps(chat)}',
         })
     return json_response({'ok': True})
 
@@ -147,6 +202,9 @@ alert_query = dedent('''
             alertId
             alertType
             streamId
+            stream {
+              labelJSON
+            }
             itemPath
             lastItemUnit
             lastItemValueJSON
