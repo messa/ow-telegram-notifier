@@ -94,26 +94,38 @@ async def notify_about_alerts(conf, session, old_alerts, new_alerts):
     if not conf.telegram_chat_id:
         logger.info('telegram_chat_id not configured')
         return
-    old_alerts_by_id = {a['alertId']: a for a in old_alerts}
-    new_alerts_by_id = {a['alertId']: a for a in new_alerts}
-    assert len(old_alerts_by_id) == len(old_alerts)
-    assert len(new_alerts_by_id) == len(new_alerts)
-    messages = []
-    for a in old_alerts:
-        if a['alertId'] not in new_alerts_by_id:
-            logger.debug('Alert closed: %s', json.dumps(a))
-            messages.append('\U0001F334 ' + alert_text(a))
-    for a in new_alerts:
-        if a['alertId'] not in old_alerts_by_id:
-            logger.debug('Alert open: %s', json.dumps(a))
-            messages.append('\U0001F525 ' + alert_text(a))
-    if messages:
-        txt = '\n'.join(messages)
+    message_texts = generate_message_texts(old_alerts, new_alerts)
+    for txt in message_texts:
         await tg_request(conf, session, 'sendMessage', {
             'chat_id': conf.telegram_chat_id,
             'text': txt,
             'parse_mode': 'MarkdownV2',
         })
+
+        
+def generate_message_texts(old_alerts, new_alerts):
+    old_alerts_by_id = {a['alertId']: a for a in old_alerts}
+    new_alerts_by_id = {a['alertId']: a for a in new_alerts}
+    assert len(old_alerts_by_id) == len(old_alerts)
+    assert len(new_alerts_by_id) == len(new_alerts)
+    message_texts = []
+    # message with closed alerts
+    text_parts = []
+    for a in old_alerts:
+        if a['alertId'] not in new_alerts_by_id:
+            logger.debug('Alert closed: %s', json.dumps(a))
+            text_parts.append('\U0001F334 ' + alert_text(a))
+    if text_parts:
+        message_texts.append('\n'.join(text_parts))
+    # message with newly opened alerts
+    text_parts = []
+    for a in new_alerts:
+        if a['alertId'] not in old_alerts_by_id:
+            logger.debug('Alert open: %s', json.dumps(a))
+            text_parts.append('\U0001F525 ' + alert_text(a))
+    if text_parts:
+        message_texts.append('\n'.join(text_parts))
+    return message_texts
 
 
 def tg_md2_escape(s):
@@ -154,7 +166,7 @@ async def handle_telegram_webhook(request):
     conf = request.app['conf']
     session = request.app['client_session']
     data = await request.json()
-    logger.debug('data: %r', data)
+    logger.debug('Telegram webhook data: %r', data)
     if data.get('message') and data['message'].get('text') == '/id':
         chat = data['message']['chat']
         chat_id = chat['id']
