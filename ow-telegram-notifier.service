@@ -1,0 +1,14 @@
+# this is a template of Systemd service unit file
+# copy this to /etc/systemd/system/ and run systemctl enable --now ow-telegram-notifier
+
+[Unit]
+Description=Overwatch Telegram notifier
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/some/path/bot.py --conf /some/path/ow_telegram_notifier.yaml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
