@@ -165,16 +165,20 @@ async def handle_list_alerts(request):
 async def handle_telegram_webhook(request):
     conf = request.app['conf']
     session = request.app['client_session']
-    data = await request.json()
-    logger.debug('Telegram webhook data: %r', data)
-    if data.get('message') and data['message'].get('text') == '/id':
-        chat = data['message']['chat']
+    payload = await request.json()
+    logger.debug('Telegram webhook data: %r', payload)
+    await process_telegram_webhook(conf, session, payload)
+    return json_response({'ok': True})
+                             
+                             
+async def process_telegram_webhook(conf, session, payload):
+    if payload.get('message') and payload['message'].get('text') == '/id':
+        chat = payload['message']['chat']
         chat_id = chat['id']
         await tg_request(conf, session, 'sendMessage', {
             'chat_id': chat_id,
             'text': f'Hola, the chat id is {chat_id}\nFull data: {json.dumps(chat)}',
         })
-    return json_response({'ok': True})
 
 
 async def setup_telegram_webhook(conf, session):
