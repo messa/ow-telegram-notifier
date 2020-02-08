@@ -30,8 +30,9 @@ def main():
     p.add_argument('--port', type=int, help='bind port')
     p.add_argument('--host', help='bind host')
     p.add_argument('--dev', action='store_true', help='enable development mode')
+    p.add_argument('--verbose', '-v', action='store_true', help='enable more logging')
     args = p.parse_args()
-    setup_logging()
+    setup_logging(verbose=args.verbose)
     cfg_path = args.conf or os.environ.get('CONF_FILE')
     conf = Configuration(cfg_path, args)
     try:
@@ -237,14 +238,15 @@ async def retrieve_alerts(conf, session):
         },
         json={'query': alert_query},
         timeout=30)
-    logger.debug('Retrieving alerts from %s', redacted(conf.graphql_endpoint))
+    url = conf.graphql_endpoint
+    logger.debug('Retrieving alerts from %s', redacted(url))
     t0 = monotime()
-    async with session.post(conf.graphql_endpoint, **post_kwargs) as resp:
+    async with session.post(url, **post_kwargs) as resp:
         resp.raise_for_status()
         rj = await resp.json()
         logger.debug('GQL response: %s', smart_repr(rj))
         if rj.get('error') or rj.get('errors'):
-            raise Exception(f'Received error: {rj}')
+            raise Exception(f'Received error response from {redacted(url)}: {rj}')
         alerts = [edge['node'] for edge in rj['data']['activeAlerts']['edges']]
         logger.debug('Retrieved %d alerts in %.3f s', len(alerts), monotime() - t0)
         return alerts
@@ -253,12 +255,12 @@ async def retrieve_alerts(conf, session):
 log_format = '%(asctime)s %(name)-25s %(levelname)5s: %(message)s'
 
 
-def setup_logging():
-    from logging import DEBUG, getLogger, StreamHandler, Formatter
+def setup_logging(verbose):
+    from logging import DEBUG, WARNING, getLogger, StreamHandler, Formatter
     getLogger('').setLevel(DEBUG)
     h = StreamHandler()
     h.setFormatter(Formatter(log_format))
-    h.setLevel(DEBUG)
+    h.setLevel(DEBUG if verbose else WARNING)
     getLogger('').addHandler(h)
 
 
