@@ -1,4 +1,4 @@
-from bot import redacted
+from ow_telegram_notifier import redacted
 
 
 def test_redacted():

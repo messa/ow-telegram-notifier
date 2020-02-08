@@ -7,7 +7,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/some/path/bot.py --conf /some/path/ow_telegram_notifier.yaml
+ExecStart=/some/path/ow_telegram_notifier.py --conf /some/path/ow_telegram_notifier.yaml
 Restart=always
 
 [Install]
