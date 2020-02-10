@@ -3,7 +3,7 @@
 from aiohttp import ClientSession
 from aiohttp.web import Application, RouteTableDef, AppRunner, TCPSite, Response, json_response, HTTPForbidden
 from argparse import ArgumentParser
-from asyncio import run, sleep, wait_for
+from asyncio import run, sleep, wait_for, CancelledError
 try:
     import simplejson as json
 except ImportError:
@@ -92,6 +92,8 @@ async def async_main(conf):
                     continue
                 notify_aux = await notify_about_alerts(conf, session, current_alerts, new_alerts, notify_aux)
                 current_alerts[:] = new_alerts
+        except CancelledError:
+            pass
         except Exception as e:
             logger.exception('async_main failed: %r', e)
             await tg_request(conf, session, 'sendMessage', {
