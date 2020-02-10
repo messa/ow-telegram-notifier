@@ -42,6 +42,9 @@ def main():
 
 
 class Configuration:
+    '''
+    Read configuration from file or env variables (or use defaults).
+    '''
 
     def __init__(self, cfg_path, args):
         if cfg_path:
@@ -103,7 +106,7 @@ async def notify_about_alerts(conf, session, old_alerts, new_alerts):
             'parse_mode': 'MarkdownV2',
         })
 
-        
+
 def generate_message_texts(old_alerts, new_alerts):
     old_alerts_by_id = {a['alertId']: a for a in old_alerts}
     new_alerts_by_id = {a['alertId']: a for a in new_alerts}
@@ -131,23 +134,32 @@ def generate_message_texts(old_alerts, new_alerts):
 
 def tg_md2_escape(s):
     '''
+    Escape characters that need to be escaped in Telegram markdown2-formatted message.
+
     According to https://core.telegram.org/bots/api#markdownv2-style
     '''
+    assert isinstance(s, str)
     for c in '_*[]()~`>#+-=|{}.!':
         s = s.replace(c, '\\' + c)
     return s
 
 
 def alert_text(alert):
+    '''
+    Convert GraphQL alert object to a meaningful string
+    '''
     esc = tg_md2_escape
     try:
         label = json.loads(alert['stream']['labelJSON'])
         label_str = ' '.join(f"{esc(k)}{esc('=')}`{esc(v)}`" for k, v in label.items())
         path = '>'.join(alert['itemPath'])
-        return f"{label_str} *{esc(alert['alertType'])}* {esc(path)} {esc(alert['lastItemValueJSON'] or '-')} {esc('(')}`{esc(alert['alertId'])}`{esc(')')}"
+        return (
+            f"{label_str} *{esc(alert['alertType'])}* {esc(path)} {esc(alert['lastItemValueJSON'] or '-')} "
+            f"{esc('(')}`{esc(alert['alertId'])}`{esc(')')}"
+        )
     except Exception as e:
         logger.exception('Failed to build alert text: %r; alert: %r', e, alert)
-        return json.dumps(alert)
+        return esc(json.dumps(alert))
 
 
 @routes.get('/')
@@ -164,15 +176,22 @@ async def handle_list_alerts(request):
 
 @routes.post('/telegram-webhook')
 async def handle_telegram_webhook(request):
+    '''
+    Process request data and call process_telegram_webhook().
+    '''
     conf = request.app['conf']
     session = request.app['client_session']
     payload = await request.json()
     logger.debug('Telegram webhook data: %r', payload)
     await process_telegram_webhook(conf, session, payload)
+    # AFAIK no response is really expected by Telegram, so just send { ok }.
     return json_response({'ok': True})
-                             
-                             
+
+
 async def process_telegram_webhook(conf, session, payload):
+    '''
+    Handle call to /telegram-webhook.
+    '''
     if payload.get('message') and payload['message'].get('text') == '/id':
         chat = payload['message']['chat']
         chat_id = chat['id']
@@ -191,6 +210,11 @@ async def setup_telegram_webhook(conf, session):
 
 
 async def tg_request(conf, session, method_name, params):
+    '''
+    Send request to telegram API.
+
+    Parameter session is supposed to be aiohttp ClientSession.
+    '''
     url = f'https://api.telegram.org/bot{conf.telegram_api_token}/{method_name}'
     post_kwargs = dict(
         headers={
