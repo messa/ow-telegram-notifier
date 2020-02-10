@@ -96,7 +96,7 @@ async def async_main(conf):
             logger.exception('async_main failed: %r', e)
             await tg_request(conf, session, 'sendMessage', {
                 'chat_id': conf.telegram_chat_id,
-                'text': f'Exception: `{tg_md2_escape(repr(e))}`',
+                'text': f'\U0001F4A5 Exception: `{tg_md2_escape(repr(e))}`',
                 'parse_mode': 'MarkdownV2',
             })
         finally:
@@ -117,40 +117,39 @@ async def notify_about_alerts(conf, session, old_alerts, new_alerts, notify_aux=
     return notify_aux
 
 
-def generate_message_texts(previous_alerts, current_alerts, notify_aux):
+def generate_message_texts(previous_alerts, current_alerts, notify_aux, now=None):
     '''
     Parameter notify_aux are data thta this function uses to keep track of things.
     '''
-    if not notify_aux:
-        notify_aux = {
-            'waiting_alert_ids': {}, # alert id -> monotime
-        }
+    notify_aux = notify_aux or {}
+    waiting_alert_ids = notify_aux.setdefault('waiting_alert_ids', {})  # alert id -> monotime
+    now = now or monotime()
     old_alerts_by_id = {a['alertId']: a for a in previous_alerts}
     new_alerts_by_id = {a['alertId']: a for a in current_alerts}
     assert len(old_alerts_by_id) == len(previous_alerts)
     assert len(new_alerts_by_id) == len(current_alerts)
-    closed_alerts = [a for a in old_alerts if a['alertId'] not in new_alerts_by_id]
-    opened_alerts = [a for a in new_alerts if a['alertId'] not in old_alerts_by_id]
+    closed_alerts = [a for a in previous_alerts if a['alertId'] not in new_alerts_by_id]
+    opened_alerts = [a for a in current_alerts if a['alertId'] not in old_alerts_by_id]
     mentions_of_closed_alerts = []
     mentions_of_short_lived_alerts = []
     mentions_of_opened_alerts = []
     # message with closed alerts
     for a in closed_alerts:
-        if a['alerId'] in notify_aux['waiting_alert_ids']:
-            notify_aux['waiting_alert_ids'].pop(a['alertId'])
-            mentions_of_short_lived_alerts.append('\u267B ' + alert_text(a))
+        if a['alertId'] in waiting_alert_ids:
+            waiting_alert_ids.pop(a['alertId'])
+            mentions_of_short_lived_alerts.append('\u267B\uFE0F ' + alert_text(a))
         else:
             mentions_of_closed_alerts.append('\U0001F334 ' + alert_text(a))
     # message with newly opened alerts
     for a in opened_alerts:
-        assert a['alertId'] not in notify_aux['waiting_alerts']
-        notify_aux['waiting_alerts'][a['alertId']] = monotime() + 60
+        assert a['alertId'] not in waiting_alert_ids
+        waiting_alert_ids[a['alertId']] = now + 60
     for a in current_alerts:
-        if notify_aux['waiting_alerts'].get(a['alertId']):
-            if notify_aux['waiting_alerts'][a['alertId']] <= monotime():
-                notify_aux['waiting_alert_ids'].pop(a['alertId'])
+        if waiting_alert_ids.get(a['alertId']):
+            if waiting_alert_ids[a['alertId']] <= now:
+                waiting_alert_ids.pop(a['alertId'])
                 mentions_of_opened_alerts.append('\U0001F525 ' + alert_text(a))
-    assert notify_aux['waiting_alerts'].keys() <= {a['alertId'] for a in current_alerts}
+    assert waiting_alert_ids.keys() <= {a['alertId'] for a in current_alerts}
     message_texts = [
         '\n'.join(mentions_of_closed_alerts),
         '\n'.join(mentions_of_short_lived_alerts),
