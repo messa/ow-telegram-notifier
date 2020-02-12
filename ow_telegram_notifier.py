@@ -23,8 +23,6 @@ logger = getLogger(__name__)
 
 routes = RouteTableDef()
 
-wait_duration_s = 90
-
 
 def main():
     p = ArgumentParser()
@@ -33,6 +31,7 @@ def main():
     p.add_argument('--host', help='bind host')
     p.add_argument('--dev', action='store_true', help='enable development mode')
     p.add_argument('--verbose', '-v', action='store_true', help='enable more logging')
+    p.add_argument('--immediate', '-i', action='store_true', help='do not wait whether alert will be short-lived')
     args = p.parse_args()
     setup_logging(verbose=args.verbose)
     cfg_path = args.conf or os.environ.get('CONF_FILE')
@@ -64,6 +63,7 @@ class Configuration:
         self.telegram_chat_id = env('TELEGRAM_CHAT_ID') or cfg.get('telegram_chat_id')
         self.development_mode_enabled = args.dev
         self.sleep_interval = float(cfg.get('sleep_interval') or 5)
+        self.wait_duration_s = 0 if args.immediate else 90
 
 
 async def async_main(conf):
@@ -111,7 +111,7 @@ async def notify_about_alerts(conf, session, old_alerts, new_alerts, notify_aux=
     if not conf.telegram_chat_id:
         logger.info('telegram_chat_id not configured')
         return
-    message_texts, notify_aux = generate_message_texts(old_alerts, new_alerts, notify_aux)
+    message_texts, notify_aux = generate_message_texts(conf, old_alerts, new_alerts, notify_aux)
     for txt in message_texts:
         await tg_request(conf, session, 'sendMessage', {
             'chat_id': conf.telegram_chat_id,
@@ -121,7 +121,7 @@ async def notify_about_alerts(conf, session, old_alerts, new_alerts, notify_aux=
     return notify_aux
 
 
-def generate_message_texts(previous_alerts, current_alerts, notify_aux, now=None):
+def generate_message_texts(conf, previous_alerts, current_alerts, notify_aux, now=None):
     '''
     Parameter notify_aux are data thta this function uses to keep track of things.
     '''
@@ -147,7 +147,7 @@ def generate_message_texts(previous_alerts, current_alerts, notify_aux, now=None
     # message with newly opened alerts
     for a in opened_alerts:
         assert a['alertId'] not in waiting_alert_ids
-        waiting_alert_ids[a['alertId']] = now + wait_duration_s
+        waiting_alert_ids[a['alertId']] = now + conf.wait_duration_s
     for a in current_alerts:
         if waiting_alert_ids.get(a['alertId']):
             if waiting_alert_ids[a['alertId']] <= now:
