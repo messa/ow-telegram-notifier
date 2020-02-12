@@ -23,6 +23,8 @@ logger = getLogger(__name__)
 
 routes = RouteTableDef()
 
+wait_duration_s = 90
+
 
 def main():
     p = ArgumentParser()
@@ -145,7 +147,7 @@ def generate_message_texts(previous_alerts, current_alerts, notify_aux, now=None
     # message with newly opened alerts
     for a in opened_alerts:
         assert a['alertId'] not in waiting_alert_ids
-        waiting_alert_ids[a['alertId']] = now + 60
+        waiting_alert_ids[a['alertId']] = now + wait_duration_s
     for a in current_alerts:
         if waiting_alert_ids.get(a['alertId']):
             if waiting_alert_ids[a['alertId']] <= now:
