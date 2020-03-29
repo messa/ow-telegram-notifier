@@ -64,6 +64,15 @@ class Configuration:
         self.development_mode_enabled = args.dev
         self.sleep_interval = float(cfg.get('sleep_interval') or 5)
         self.wait_duration_s = 0 if args.immediate else 90
+        self.ignore_messages = [re.compile(regex) for regex in cfg.get('ignore_messages', [])]
+
+    def is_message_ignored(self, message):
+        assert isinstance(message, str)
+        for n, regex in enumerate(self.ignore_messages):
+            if regex.search(message):
+                logger.debug('Message is ignored: %r; matched by conf.ignore_messages[%d]: %r', message, n, regex)
+                return True
+        return False
 
 
 async def async_main(conf):
@@ -155,9 +164,9 @@ def generate_message_texts(conf, previous_alerts, current_alerts, notify_aux, no
                 mentions_of_opened_alerts.append('\U0001F525 ' + alert_text(a))
     assert waiting_alert_ids.keys() <= {a['alertId'] for a in current_alerts}
     message_texts = [
-        '\n'.join(mentions_of_closed_alerts),
-        '\n'.join(mentions_of_short_lived_alerts),
-        '\n'.join(mentions_of_opened_alerts),
+        '\n'.join(t for t in mentions_of_closed_alerts      if not conf.is_message_ignored(t)),
+        '\n'.join(t for t in mentions_of_short_lived_alerts if not conf.is_message_ignored(t)),
+        '\n'.join(t for t in mentions_of_opened_alerts      if not conf.is_message_ignored(t)),
     ]
     message_texts = [t for t in message_texts if t]
     return message_texts, notify_aux
