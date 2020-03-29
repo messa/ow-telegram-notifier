@@ -6,7 +6,13 @@ from ow_telegram_notifier import redacted, generate_message_texts
 @fixture
 def conf():
     class Configuration:
+
         wait_duration_s = 90
+
+        def is_message_ignored(self, message):
+            assert isinstance(message, str)
+            return False
+
     return Configuration()
 
 
