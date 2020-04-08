@@ -69,7 +69,16 @@ class Configuration:
     def is_message_ignored(self, message):
         assert isinstance(message, str)
         for n, regex in enumerate(self.ignore_messages):
-            if regex.search(message):
+            m = regex.search(message)
+            if not m:
+                # try to match message without backslashes added for escaping markdown
+                # - users maybe don't realize they are there, because they are obviously
+                # not visible in the Telegram message
+                m = regex.search(message.replace('\\', ''))
+            if not m:
+                # try to match message without any markdown stuff
+                m = regex.search(message.replace('\\', '').replace('`', '').replace('*', ''))
+            if m:
                 logger.debug('Message is ignored: %r; matched by conf.ignore_messages[%d]: %r', message, n, regex)
                 return True
         return False
