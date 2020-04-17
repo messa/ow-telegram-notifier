@@ -11,7 +11,6 @@ except ImportError:
 from logging import getLogger
 import os
 from pathlib import Path
-from pprint import pformat
 import re
 from reprlib import repr as smart_repr
 import sys
@@ -123,7 +122,7 @@ async def async_main(conf):
                     await sleep(60)
                     continue
                 if {a['alertId'] for a in new_alerts} != {a['alertId'] for a in current_alerts}:
-                    logger.debug('Retrieved alerts:\n%s', pformat(new_alerts, compact=True))
+                    logger.debug('Retrieved alerts:\n%s', '\n'.join(json.dumps(a) for a in new_alerts))
                 notify_aux = await notify_about_alerts(conf, session, current_alerts, new_alerts, notify_aux)
                 current_alerts[:] = new_alerts
         except CancelledError:
