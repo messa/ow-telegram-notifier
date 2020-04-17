@@ -122,7 +122,7 @@ async def async_main(conf):
                     logger.info('Failed to retrieve alerts: %s', e)
                     await sleep(60)
                     continue
-                if new_alerts != current_alerts:
+                if {a['alertId'] for a in new_alerts} != {a['alertId'] for a in current_alerts}:
                     logger.debug('Retrieved alerts:\n%s', pformat(new_alerts, compact=True))
                 notify_aux = await notify_about_alerts(conf, session, current_alerts, new_alerts, notify_aux)
                 current_alerts[:] = new_alerts
@@ -332,6 +332,7 @@ async def retrieve_alerts(conf, session):
         resp.raise_for_status()
         rj = await resp.json()
         logger.debug('GQL response: %s', smart_repr(rj))
+        logger.debug('pageInfo: %r', rj['data']['activeAlerts']['pageInfo'])
         if rj.get('error') or rj.get('errors'):
             raise Exception(f'Received error response from {redacted(url)}: {rj}')
         alerts = [edge['node'] for edge in rj['data']['activeAlerts']['edges']]
