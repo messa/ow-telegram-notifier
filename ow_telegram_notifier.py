@@ -11,6 +11,7 @@ except ImportError:
 from logging import getLogger
 import os
 from pathlib import Path
+from pprint import pformat
 import re
 from reprlib import repr as smart_repr
 import sys
@@ -32,10 +33,13 @@ def main():
     p.add_argument('--dev', action='store_true', help='enable development mode')
     p.add_argument('--verbose', '-v', action='store_true', help='enable more logging')
     p.add_argument('--immediate', '-i', action='store_true', help='do not wait whether alert will be short-lived')
+    p.add_argument('--log-file', metavar='FILE', help='log to file instead of stderr')
     args = p.parse_args()
     setup_logging(verbose=args.verbose)
     cfg_path = args.conf or os.environ.get('CONF_FILE')
     conf = Configuration(cfg_path, args)
+    if conf.log_file:
+        setup_log_file(conf.log_file)
     try:
         run(async_main(conf))
     except Exception as e:
@@ -52,8 +56,10 @@ class Configuration:
             cfg_path = Path(cfg_path)
             logger.debug('Loading configuration from %s', cfg_path)
             cfg = yaml.safe_load(cfg_path.read_text())
+            cfg_dir = cfg_path.parent
         else:
             cfg = {}
+            cfg_dir = Path('.')
         env = os.environ.get
         self.bind_host = args.host or env('BIND_HOST') or cfg.get('bind_host') or '127.0.0.1'
         self.bind_port = int(args.port or env('BIND_PORT') or cfg.get('bind_port') or 5000)
@@ -65,6 +71,12 @@ class Configuration:
         self.sleep_interval = float(cfg.get('sleep_interval') or 5)
         self.wait_duration_s = 0 if args.immediate else 90
         self.ignore_messages = [re.compile(regex) for regex in cfg.get('ignore_messages', [])]
+        if env('LOG_FILE'):
+            self.log_file = env('LOG_FILE')
+        elif cfg.get('log_file'):
+            self.log_file = cfg_dir / cfg['log_file']
+        else:
+            self.log_file = None
 
     def is_message_ignored(self, message):
         assert isinstance(message, str)
@@ -110,6 +122,8 @@ async def async_main(conf):
                     logger.info('Failed to retrieve alerts: %s', e)
                     await sleep(60)
                     continue
+                if new_alerts != current_alerts:
+                    logger.debug('Retrieved alerts:\n%s', pformat(new_alerts, compact=True))
                 notify_aux = await notify_about_alerts(conf, session, current_alerts, new_alerts, notify_aux)
                 current_alerts[:] = new_alerts
         except CancelledError:
@@ -334,6 +348,15 @@ def setup_logging(verbose):
     h = StreamHandler()
     h.setFormatter(Formatter(log_format))
     h.setLevel(DEBUG if verbose else WARNING)
+    getLogger('').addHandler(h)
+
+
+def setup_log_file(log_file_path):
+    from logging import DEBUG, getLogger, Formatter
+    from logging.handlers import WatchedFileHandler
+    h = WatchedFileHandler(str(log_file_path))
+    h.setFormatter(Formatter(log_format))
+    h.setLevel(DEBUG)
     getLogger('').addHandler(h)
 
 
